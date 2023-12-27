@@ -3,12 +3,13 @@ package com.funkyfunctor.image_gatherer
 import io.circe.*
 import io.circe.generic.auto.*
 import io.circe.parser.*
-import zio.{Scope, Task, ZIO, ZIOApp, ZIOAppArgs, ZIOAppDefault}
+import zio.{Scope, Task, UIO, URIO, ZIO, ZIOApp, ZIOAppArgs, ZIOAppDefault}
 
-import java.io.File
+import java.io.{File, IOException}
+import java.nio.file.attribute.FileAttribute
 import java.nio.file.{Files, Path, StandardOpenOption}
 import java.util.{Base64, UUID}
-import scala.io.Source
+import scala.io.{BufferedSource, Source}
 
 // Define case classes to represent the HAR structure
 case class HarLog(log: HarData)
@@ -27,44 +28,60 @@ object Main extends ZIOAppDefault {
         if (args.isEmpty)
           ZIO.fail("Missing argument to indicate the input HAR file")
         else ZIO.succeed(args.head)
-      pageString <- ZIO.attempt(Source.fromFile(file).mkString)
+      pageString <- loadFile(file)
       harLog     <- ZIO.fromEither(decode[HarLog](pageString))
 
       // We get the list of images
       resources = harLog.log.entries.filter { entry =>
         entry.response.status == 200 &&
-        entry.response.content.mimeType == "image/jpeg"
+        entry.response.content.mimeType.startsWith("image/")
       }
+//      resources = harLog.log.entries.foreach(entry =>
+//        System.err.println(entry.request.url + " -> " + entry.response.content.mimeType)
+//      )
 
       // We download the images
       outputFolder <- ZIO.attempt {
-        Files.createDirectory(Path.of(file + "_output")).toFile
+        val fic = new File(file + "_output")
+        if (!fic.exists())
+          Files.createDirectory(Path.of(fic.toURI))
+
+        fic
       }
-      result <- ZIO.foreachPar(resources)(getContent(outputFolder, _))
+
+      _ <- ZIO.foreachParDiscard(resources)(getContent(outputFolder, _))
     } yield ()
   }
 
-  def getContent(outputFolder: File, entry: HarEntry): ZIO[Any, Throwable, Unit] = {
+  def loadFile(file: String): UIO[String] = ZIO.scoped {
+    ZIO.fromAutoCloseable(ZIO.attemptBlockingIO(Source.fromFile(file))).map(src => src.mkString)
+  }.orDie
+
+  def getContent(outputFolder: File, entry: HarEntry): UIO[Unit] = {
     entry.response.content.text match {
       case None => ZIO.unit
       case Some(content) =>
-        for {
-          binaryContent <- ZIO.attempt(Base64.getDecoder.decode(content))
-          path          <- getFileName(outputFolder, entry)
-          _ <- ZIO.attempt(
-            Files.write(
-              path,
-              binaryContent,
-              StandardOpenOption.CREATE,
-              StandardOpenOption.WRITE
+        {
+          for {
+            binaryContent <- ZIO.attempt(Base64.getDecoder.decode(content))
+            path          <- getFileName(outputFolder, entry)
+            _ <- ZIO.attempt(
+              Files.write(
+                path,
+                binaryContent,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.WRITE
+              )
             )
-          )
-          _ <- ZIO.logInfo(s"Wrote content to $path")
-        } yield ()
+          } yield path
+        }.foldZIO(
+          failure => ZIO.logError(s"Failed to write ${entry.request.url} to disk: $failure"),
+          path => ZIO.logInfo(s"Wrote content to $path")
+        )
     }
   }
 
-  private val urlRegex = """.*/([^/]+)$""".r
+  private val urlRegex = """.*/([^/?]+).*$""".r
 
   def getFileName(parentFolder: File, entry: HarEntry): Task[Path] = {
     {
