@@ -22,9 +22,9 @@ object JacksonStream extends ZIOAppDefault {
 
   private def loadEntries(file: File) = {
     for {
-      fis <- ZIO.attempt(new FileInputStream(file))
-       surfer <- ZIO.attempt(new JsonSurfer(JacksonParser.INSTANCE, JacksonProvider.INSTANCE))
-       it <- ZIO.attempt(surfer.iterator(fis, JsonPathCompiler.compile("$..entries[*]")))
+      fis    <- ZIO.attempt(new FileInputStream(file))
+      surfer <- ZIO.attempt(new JsonSurfer(JacksonParser.INSTANCE, JacksonProvider.INSTANCE))
+      it     <- ZIO.attempt(surfer.iterator(fis, JsonPathCompiler.compile("$..entries[*]")))
     } yield it.asScala
   }
 
@@ -32,13 +32,14 @@ object JacksonStream extends ZIOAppDefault {
     ZStream
       .fromIteratorZIO(loadEntries(file))
       .flatMap {
-        case on: com.fasterxml.jackson.databind.node.ObjectNode => ZStream( on.toString)
-        case _ => ZStream.empty
+        case on: com.fasterxml.jackson.databind.node.ObjectNode => ZStream(on.toString)
+        case _                                                  => ZStream.empty
       }
-      .flatMap { str =>
-        decode[HarEntry](str) match
-          case Left(_) => ZStream.empty
+      .flatMap {
+        decode[HarEntry](_) match {
+          case Left(_)      => ZStream.empty
           case Right(value) => ZStream(value)
+        }
       }
   }
 }
