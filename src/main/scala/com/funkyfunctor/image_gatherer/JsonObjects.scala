@@ -2,8 +2,8 @@ package com.funkyfunctor.image_gatherer
 
 object JsonObjects {
   // Define case classes to represent the HAR structure
-  case class HarLog(log: HarData)
-
+//  case class HarLog(log: HarData)
+//
   case class HarData(entries: List[HarEntry])
 
   case class HarEntry(request: HarRequest, response: HarResponse)
