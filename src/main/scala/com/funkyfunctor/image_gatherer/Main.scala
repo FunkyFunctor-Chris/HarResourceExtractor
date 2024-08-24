@@ -1,63 +1,52 @@
 package com.funkyfunctor.image_gatherer
 
+import com.funkyfunctor.image_gatherer.JsonObjects.HarEntry
 import io.circe.*
-import io.circe.generic.auto.*
-import io.circe.parser.*
-import zio.{Scope, Task, UIO, URIO, ZIO, ZIOApp, ZIOAppArgs, ZIOAppDefault}
+import zio.*
 
-import java.io.{File, IOException}
-import java.nio.file.attribute.FileAttribute
+import java.io.File
 import java.nio.file.{Files, Path, StandardOpenOption}
 import java.util.{Base64, UUID}
-import scala.io.{BufferedSource, Source}
-
-// Define case classes to represent the HAR structure
-case class HarLog(log: HarData)
-case class HarData(entries: List[HarEntry])
-case class HarEntry(request: HarRequest, response: HarResponse)
-case class HarRequest(method: String, url: String)
-case class HarResponse(status: Int, content: HarContent)
-case class HarContent(size: Long, mimeType: String, text: Option[String])
 
 object Main extends ZIOAppDefault {
-  override def run: ZIO[ZIOAppArgs with Scope, Any, Any] = {
+  override def run: ZIO[ZIOAppArgs & Scope, Any, Unit] = {
     for {
       // We get the HAR
       args <- getArgs
-      file <-
+      path <-
         if (args.isEmpty)
           ZIO.fail("Missing argument to indicate the input HAR file")
         else ZIO.succeed(args.head)
-      pageString <- loadFile(file)
-      harLog     <- ZIO.fromEither(decode[HarLog](pageString))
+      file <- ZIO.attempt {
+        val f = new File(path)
 
-      // We get the list of images
-      resources = harLog.log.entries.filter { entry =>
-        entry.response.status == 200 &&
-        entry.response.content.mimeType.startsWith("image/")
+        if (f.exists())
+          f
+        else throw new Exception(s"File $f does not exist")
       }
-//      resources = harLog.log.entries.foreach(entry =>
-//        System.err.println(entry.request.url + " -> " + entry.response.content.mimeType)
-//      )
-
-      // We download the images
-      outputFolder <- ZIO.attempt {
-        val fic = new File(file + "_output")
-        if (!fic.exists())
-          Files.createDirectory(Path.of(fic.toURI))
-
-        fic
-      }
-
-      _ <- ZIO.foreachParDiscard(resources)(getContent(outputFolder, _))
+      outputFolder <- createOutputFolder(path, args)
+      _ <- JacksonStream
+        .getStream(file)
+        .filter { entry =>
+          entry.response.status == 200 &&
+          entry.response.content.mimeType.startsWith("image/")
+        }
+        .foreach(persistContent(outputFolder, _))
     } yield ()
   }
 
-  def loadFile(file: String): UIO[String] = ZIO.scoped {
-    ZIO.fromAutoCloseable(ZIO.attemptBlockingIO(Source.fromFile(file))).map(src => src.mkString)
-  }.orDie
+  private def createOutputFolder(file: String, args: Chunk[String]): Task[File] = ZIO.attempt {
+    val fic = if (args.length >= 2) {
+      new File(args(1))
+    } else new File(file + "_output")
 
-  def getContent(outputFolder: File, entry: HarEntry): UIO[Unit] = {
+    if (!fic.exists())
+      Files.createDirectory(Path.of(fic.toURI))
+
+    fic
+  }
+
+  private def persistContent(outputFolder: File, entry: HarEntry): UIO[Unit] = {
     entry.response.content.text match {
       case None => ZIO.unit
       case Some(content) =>

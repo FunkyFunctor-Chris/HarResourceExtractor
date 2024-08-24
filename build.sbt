@@ -1,20 +1,24 @@
-val scala3Version = "3.2.2"
-val circeVersion  = "0.14.1"
+val scala3Version = "3.4.2"
 
 val circe = Seq(
-  "io.circe" %% "circe-core",
-  "io.circe" %% "circe-generic",
-  "io.circe" %% "circe-parser"
-).map(_ % circeVersion)
+  "circe-core",
+  "circe-generic",
+  "circe-parser"
+).map("io.circe" %% _ % "0.14.1")
+
+def zioLib(name: String) = "dev.zio" %% name % "2.1.7"
 
 lazy val root = project
   .in(file("."))
   .settings(
     name := "HAR Resource Extractor",
-    version := "0.1.0-SNAPSHOT",
+    version := "0.2.0-SNAPSHOT",
     scalaVersion := scala3Version,
     libraryDependencies ++= List(
-      "dev.zio"                    %% "zio"       % "2.0.13",
-      "com.softwaremill.quicklens" %% "quicklens" % "1.9.4"
+      zioLib("zio"),
+      zioLib("zio-streams"),
+      "com.softwaremill.quicklens" %% "quicklens" % "1.9.7",
+//      "com.fasterxml.jackson.core" % "jackson-core" % "2.17.2",
+      "com.github.jsurfer" % "jsurfer-jackson" % "1.6.4"
     ) ++ circe
   )
